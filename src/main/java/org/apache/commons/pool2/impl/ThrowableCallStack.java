@@ -1,19 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.apache.commons.pool2.impl;
 
 import java.io.PrintWriter;
@@ -21,23 +5,17 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 
 /**
- * CallStack strategy that uses the stack trace from a {@link Throwable}. This strategy, while slower than the
- * SecurityManager implementation, provides call stack method names and other metadata in addition to the call stack
- * of classes.
- *
- * @see Throwable#fillInStackTrace()
- * @since 2.4.3
+ * 通过异常 {@link Throwable} 获取堆栈信息
  */
 public class ThrowableCallStack implements CallStack {
 
-    /**
-     * A snapshot of a throwable.
-     */
+    // 基于异常实现的堆栈打印
     private static class Snapshot extends Throwable {
         private static final long serialVersionUID = 1L;
         private final long timestampMillis = System.currentTimeMillis();
     }
 
+    // 格式化信息
     private final String messageFormat;
 
     //@GuardedBy("dateFormat")
@@ -45,12 +23,6 @@ public class ThrowableCallStack implements CallStack {
 
     private volatile Snapshot snapshot;
 
-    /**
-     * Creates a new instance.
-     *
-     * @param messageFormat message format
-     * @param useTimestamp whether to format the dates in the output message or not
-     */
     public ThrowableCallStack(final String messageFormat, final boolean useTimestamp) {
         this.messageFormat = messageFormat;
         this.dateFormat = useTimestamp ? new SimpleDateFormat(messageFormat) : null;
@@ -73,6 +45,8 @@ public class ThrowableCallStack implements CallStack {
             return false;
         }
         final String message;
+
+        // 输出抬头信息
         if (dateFormat == null) {
             message = messageFormat;
         } else {
@@ -81,6 +55,8 @@ public class ThrowableCallStack implements CallStack {
             }
         }
         writer.println(message);
+
+        // 输出堆栈
         snapshotRef.printStackTrace(writer);
         return true;
     }

@@ -25,12 +25,7 @@ import java.security.AccessControlException;
  */
 public final class CallStackUtils {
 
-    /**
-     * Tests whether the caller can create a security manager in the current environment.
-     *
-     * @return {@code true} if it is able to create a security manager in the current environment, {@code false}
-     *         otherwise.
-     */
+    // 判断是否具备获取安全管理器的能力
     private static boolean canCreateSecurityManager() {
         final SecurityManager manager = System.getSecurityManager();
         if (manager == null) {
@@ -58,22 +53,21 @@ public final class CallStackUtils {
         return newCallStack(messageFormat, useTimestamp, false);
     }
 
+
     /**
-     * Constructs a new {@link CallStack} using the fasted allowed strategy.
-     *
-     * @param messageFormat         message (or format) to print first in stack traces
-     * @param useTimestamp          if true, interpret message as a SimpleDateFormat and print the created timestamp;
-     *                              otherwise, print message format literally
-     * @param requireFullStackTrace if true, forces the use of a stack walking mechanism that includes full stack trace
-     *                              information; otherwise, uses a faster implementation if possible
-     * @return a new CallStack
-     * @since 2.5
+     * 创建堆栈跟踪器
+     * @param messageFormat 堆栈格式化信息
+     * @param useTimestamp  是否使用时间戳日期
+     * @param requireFullStackTrace 是否需要详细堆栈信息
+     * @return
      */
     public static CallStack newCallStack(final String messageFormat,
                                          final boolean useTimestamp,
                                          final boolean requireFullStackTrace) {
         return canCreateSecurityManager() && !requireFullStackTrace ?
+                // 通过安全管理器获取堆栈信息
             new SecurityManagerCallStack(messageFormat, useTimestamp) :
+                // 通过异常获取堆栈信息
             new ThrowableCallStack(messageFormat, useTimestamp);
     }
 
