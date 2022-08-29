@@ -1,19 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.apache.commons.pool2.impl;
 
 import java.lang.ref.WeakReference;
@@ -27,24 +11,9 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
-
 /**
- * Provides a shared idle object eviction timer for all pools.
- * <p>
- * This class is currently implemented using {@link ScheduledThreadPoolExecutor}. This implementation may change in any
- * future release. This class keeps track of how many pools are using it. If no pools are using the timer, it is
- * cancelled. This prevents a thread being left running which, in application server environments, can lead to memory
- * leads and/or prevent applications from shutting down or reloading cleanly.
- * </p>
- * <p>
- * This class has package scope to prevent its inclusion in the pool public API. The class declaration below should
- * *not* be changed to public.
- * </p>
- * <p>
- * This class is intended to be thread-safe.
- * </p>
- *
- * @since 2.0
+ * 空闲对象回收线程调度器，通过ScheduledThreadPoolExecutor调度
+ * 可以负责多个对象池的空闲对象回收线程的调度
  */
 class EvictionTimer {
 

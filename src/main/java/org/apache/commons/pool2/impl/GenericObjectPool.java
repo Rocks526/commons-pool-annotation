@@ -1,19 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.apache.commons.pool2.impl;
 
 import java.time.Duration;
@@ -35,49 +19,9 @@ import org.apache.commons.pool2.TrackedUse;
 import org.apache.commons.pool2.UsageTracking;
 
 /**
- * A configurable {@link ObjectPool} implementation.
- * <p>
- * When coupled with the appropriate {@link PooledObjectFactory},
- * {@code GenericObjectPool} provides robust pooling functionality for
- * arbitrary objects.
- * </p>
- * <p>
- * Optionally, one may configure the pool to examine and possibly evict objects
- * as they sit idle in the pool and to ensure that a minimum number of idle
- * objects are available. This is performed by an "idle object eviction" thread,
- * which runs asynchronously. Caution should be used when configuring this
- * optional feature. Eviction runs contend with client threads for access to
- * objects in the pool, so if they run too frequently performance issues may
- * result.
- * </p>
- * <p>
- * The pool can also be configured to detect and remove "abandoned" objects,
- * i.e. objects that have been checked out of the pool but neither used nor
- * returned before the configured
- * {@link AbandonedConfig#getRemoveAbandonedTimeoutDuration() removeAbandonedTimeout}.
- * Abandoned object removal can be configured to happen when
- * {@code borrowObject} is invoked and the pool is close to starvation, or
- * it can be executed by the idle object evictor, or both. If pooled objects
- * implement the {@link TrackedUse} interface, their last use will be queried
- * using the {@code getLastUsed} method on that interface; otherwise
- * abandonment is determined by how long an object has been checked out from
- * the pool.
- * </p>
- * <p>
- * Implementation note: To prevent possible deadlocks, care has been taken to
- * ensure that no call to a factory method will occur within a synchronization
- * block. See POOL-125 and DBCP-44 for more information.
- * </p>
- * <p>
- * This class is intended to be thread-safe.
- * </p>
- *
- * @see GenericKeyedObjectPool
- *
- * @param <T> Type of element pooled in this pool.
- * @param <E> Type of exception thrown in this pool.
- *
- * @since 2.0
+ * 对象池基础实现
+ * @param <T>
+ * @param <E>
  */
 public class GenericObjectPool<T, E extends Exception> extends BaseGenericObjectPool<T, E>
         implements ObjectPool<T, E>, GenericObjectPoolMXBean, UsageTracking<T> {
@@ -212,91 +156,51 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
     }
 
     /**
-     * Equivalent to <code>{@link #borrowObject(long)
-     * borrowObject}({@link #getMaxWaitDuration()})</code>.
-     *
-     * {@inheritDoc}
+     * 获取池对象
+     * @return  返回池对象实例
+     * @throws E    获取失败时抛出的异常
      */
     @Override
     public T borrowObject() throws E {
         return borrowObject(getMaxWaitDuration());
     }
-
-    /**
-     * Borrows an object from the pool using the specific waiting time which only
-     * applies if {@link #getBlockWhenExhausted()} is true.
-     * <p>
-     * If there is one or more idle instance available in the pool, then an
-     * idle instance will be selected based on the value of {@link #getLifo()},
-     * activated and returned. If activation fails, or {@link #getTestOnBorrow()
-     * testOnBorrow} is set to {@code true} and validation fails, the
-     * instance is destroyed and the next available instance is examined. This
-     * continues until either a valid instance is returned or there are no more
-     * idle instances available.
-     * </p>
-     * <p>
-     * If there are no idle instances available in the pool, behavior depends on
-     * the {@link #getMaxTotal() maxTotal}, (if applicable)
-     * {@link #getBlockWhenExhausted()} and the value passed in to the
-     * {@code borrowMaxWaitMillis} parameter. If the number of instances
-     * checked out from the pool is less than {@code maxTotal,} a new
-     * instance is created, activated and (if applicable) validated and returned
-     * to the caller. If validation fails, a {@code NoSuchElementException}
-     * is thrown.
-     * </p>
-     * <p>
-     * If the pool is exhausted (no available idle instances and no capacity to
-     * create new ones), this method will either block (if
-     * {@link #getBlockWhenExhausted()} is true) or throw a
-     * {@code NoSuchElementException} (if
-     * {@link #getBlockWhenExhausted()} is false). The length of time that this
-     * method will block when {@link #getBlockWhenExhausted()} is true is
-     * determined by the value passed in to the {@code borrowMaxWaitMillis}
-     * parameter.
-     * </p>
-     * <p>
-     * When the pool is exhausted, multiple calling threads may be
-     * simultaneously blocked waiting for instances to become available. A
-     * "fairness" algorithm has been implemented to ensure that threads receive
-     * available instances in request arrival order.
-     * </p>
-     *
-     * @param borrowMaxWaitDuration The time to wait for an object
-     *                            to become available
-     *
-     * @return object instance from the pool
-     * @throws NoSuchElementException if an instance cannot be returned
-     * @throws E if an object instance cannot be returned due to an error
-     * @since 2.10.0
-     */
     public T borrowObject(final Duration borrowMaxWaitDuration) throws E {
+        // 1.检查对象池状态
         assertOpen();
 
+        // 2.废弃/泄露对象检测
         final AbandonedConfig ac = this.abandonedConfig;
         if (ac != null && ac.getRemoveAbandonedOnBorrow() && getNumIdle() < 2 &&
                 getNumActive() > getMaxTotal() - 3) {
+            // 开启泄露检测 && 池对象很多(> max -3) && 大部分都是借出状态(idle < 2)
+            // 此时怀疑客户端使用有误，导致大量池对象没有归还，开启检测机制
             removeAbandoned(ac);
         }
 
+        // 获取的池对象
         PooledObject<T> p = null;
-
-        // Get local copy of current config so it is consistent for entire
-        // method execution
+        // 获取池资源耗尽时的阻塞策略，提前获取，避免运行时被修改，导致前后获取不一致
         final boolean blockWhenExhausted = getBlockWhenExhausted();
-
+        // 是否需要创建
         boolean create;
+        // 阻塞时间
         final long waitTimeMillis = System.currentTimeMillis();
 
+        // 3.获取池对象
         while (p == null) {
             create = false;
+            // 3.1 非阻塞尝试获取
             p = idleObjects.pollFirst();
             if (p == null) {
+                // 3.2 暂无可用对象，尝试创建对象
                 p = create();
                 if (p != null) {
                     create = true;
                 }
             }
+            // 3.3 检查是否获取到对象
             if (blockWhenExhausted) {
+                // 3.3.1 阻塞模式下，阻塞等待是否有对象返回池中
                 if (p == null) {
                     try {
                         p = borrowMaxWaitDuration.isNegative() ? idleObjects.takeFirst() : idleObjects.pollFirst(borrowMaxWaitDuration);
@@ -310,14 +214,19 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                             "Timeout waiting for idle object, borrowMaxWaitDuration=" + borrowMaxWaitDuration));
                 }
             } else if (p == null) {
+                // 3.3.2 非阻塞模式下，获取对象失败 && 创建对象失败 直接抛出异常
                 throw new NoSuchElementException(appendStats("Pool exhausted"));
             }
+
+            // 3.4 分配对象
             if (!p.allocate()) {
+                // 初始化失败，直接丢弃，开始下一轮
                 p = null;
             }
 
             if (p != null) {
                 try {
+                    // 3.5 激活对象
                     factory.activateObject(p);
                 } catch (final Exception e) {
                     try {
@@ -333,6 +242,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                         throw nsee;
                     }
                 }
+                // 3.6 开启TestOnBorrow时，校验对象有效性
                 if (p != null && getTestOnBorrow()) {
                     boolean validate = false;
                     Throwable validationThrowable = null;
@@ -344,6 +254,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                     }
                     if (!validate) {
                         try {
+                            // 如果无效，直接销毁对象
                             destroy(p, DestroyMode.NORMAL);
                             destroyedByBorrowValidationCount.incrementAndGet();
                         } catch (final Exception ignored) {
@@ -361,60 +272,12 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
             }
         }
 
+        // 4.更新借用对象相关的统计数据
         updateStatsBorrow(p, Duration.ofMillis(System.currentTimeMillis() - waitTimeMillis));
 
+        // 5.返回对象实例
         return p.getObject();
     }
-
-    /**
-     * Borrows an object from the pool using the specific waiting time which only
-     * applies if {@link #getBlockWhenExhausted()} is true.
-     * <p>
-     * If there is one or more idle instance available in the pool, then an
-     * idle instance will be selected based on the value of {@link #getLifo()},
-     * activated and returned. If activation fails, or {@link #getTestOnBorrow()
-     * testOnBorrow} is set to {@code true} and validation fails, the
-     * instance is destroyed and the next available instance is examined. This
-     * continues until either a valid instance is returned or there are no more
-     * idle instances available.
-     * </p>
-     * <p>
-     * If there are no idle instances available in the pool, behavior depends on
-     * the {@link #getMaxTotal() maxTotal}, (if applicable)
-     * {@link #getBlockWhenExhausted()} and the value passed in to the
-     * {@code borrowMaxWaitMillis} parameter. If the number of instances
-     * checked out from the pool is less than {@code maxTotal,} a new
-     * instance is created, activated and (if applicable) validated and returned
-     * to the caller. If validation fails, a {@code NoSuchElementException}
-     * is thrown.
-     * </p>
-     * <p>
-     * If the pool is exhausted (no available idle instances and no capacity to
-     * create new ones), this method will either block (if
-     * {@link #getBlockWhenExhausted()} is true) or throw a
-     * {@code NoSuchElementException} (if
-     * {@link #getBlockWhenExhausted()} is false). The length of time that this
-     * method will block when {@link #getBlockWhenExhausted()} is true is
-     * determined by the value passed in to the {@code borrowMaxWaitMillis}
-     * parameter.
-     * </p>
-     * <p>
-     * When the pool is exhausted, multiple calling threads may be
-     * simultaneously blocked waiting for instances to become available. A
-     * "fairness" algorithm has been implemented to ensure that threads receive
-     * available instances in request arrival order.
-     * </p>
-     *
-     * @param borrowMaxWaitMillis The time to wait in milliseconds for an object
-     *                            to become available
-     *
-     * @return object instance from the pool
-     *
-     * @throws NoSuchElementException if an instance cannot be returned
-     *
-     * @throws E if an object instance cannot be returned due to an
-     *                   error
-     */
     public T borrowObject(final long borrowMaxWaitMillis) throws E {
         return borrowObject(Duration.ofMillis(borrowMaxWaitMillis));
     }
@@ -473,8 +336,8 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
 
             // Stop the evictor before the pool is closed since evict() calls
             // assertOpen()
-            stopEvictor();
 
+            stopEvictor();
             closed = true;
             // This clear removes any idle objects
             clear();
@@ -648,49 +511,55 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         ensureIdle(getMinIdle(), true);
     }
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Successive activations of this method examine objects in sequence,
-     * cycling through objects in oldest-to-youngest order.
-     * </p>
-     */
+
+    // 驱逐多余的空闲对象
     @Override
     public void evict() throws E {
+
+        // 1.检查对象池状态
         assertOpen();
 
+        // 2.检查是否有空闲对象
         if (!idleObjects.isEmpty()) {
 
+            // 备份一下驱逐策略
             PooledObject<T> underTest = null;
             final EvictionPolicy<T> evictionPolicy = getEvictionPolicy();
 
+            // 3.加锁
             synchronized (evictionLock) {
+                // 驱逐配置
                 final EvictionConfig evictionConfig = new EvictionConfig(
                         getMinEvictableIdleDuration(),
                         getSoftMinEvictableIdleDuration(),
                         getMinIdle());
 
+                // 是否空闲检测
                 final boolean testWhileIdle = getTestWhileIdle();
 
+                // 4.遍历空闲对象
                 for (int i = 0, m = getNumTests(); i < m; i++) {
                     if (evictionIterator == null || !evictionIterator.hasNext()) {
+                        // 5.第一次检测或所有空闲对象已经遍历完，重新构建迭代器
                         evictionIterator = new EvictionIterator(idleObjects);
                     }
+
                     if (!evictionIterator.hasNext()) {
-                        // Pool exhausted, nothing to do here
+                        // 6.没有空闲对象，直接结束
                         return;
                     }
 
                     try {
+                        // 7.获取空闲对象
                         underTest = evictionIterator.next();
                     } catch (final NoSuchElementException nsee) {
-                        // Object was borrowed in another thread
-                        // Don't count this as an eviction test so reduce i;
+                        // 其他线程借走了此对象，跳过
                         i--;
                         evictionIterator = null;
                         continue;
                     }
 
+                    // 8.调用对象方法，通知对象开始空闲回收测试，对象进行状态修改
                     if (!underTest.startEvictionTest()) {
                         // Object was borrowed in another thread
                         // Don't count this as an eviction test so reduce i;
@@ -703,31 +572,40 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                     // killing the eviction thread.
                     boolean evict;
                     try {
+                        // 9.通过策略判断是否需要回收
                         evict = evictionPolicy.evict(evictionConfig, underTest,
                                 idleObjects.size());
                     } catch (final Throwable t) {
                         // Slightly convoluted as SwallowedExceptionListener
                         // uses Exception rather than Throwable
+                        // 捕捉驱逐策略抛出的异常，避免用户实现的驱逐策略导致整个驱逐线程挂掉
                         PoolUtils.checkRethrow(t);
                         swallowException(new Exception(t));
                         // Don't evict on error conditions
                         evict = false;
                     }
 
+
                     if (evict) {
+                        // 10.1 此对象需要回收，进行销毁并更新相关统计数据
                         destroy(underTest, DestroyMode.NORMAL);
                         destroyedByEvictorCount.incrementAndGet();
                     } else {
+                        // 10.2 对象不应该被回收
                         if (testWhileIdle) {
+                            // 10.3 开启空闲时测试有效性，检测对象有效性，检查之前需要先激活 (因为空闲对象返回池中时会钝化)
                             boolean active = false;
                             try {
+                                // 10.4 激活对象
                                 factory.activateObject(underTest);
                                 active = true;
                             } catch (final Exception e) {
+                                // 10.5 激活失败直接销毁
                                 destroy(underTest, DestroyMode.NORMAL);
                                 destroyedByEvictorCount.incrementAndGet();
                             }
                             if (active) {
+                                // 10.6 激活之后校验有效性
                                 boolean validate = false;
                                 Throwable validationThrowable = null;
                                 try {
@@ -737,6 +615,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                                     validationThrowable = t;
                                 }
                                 if (!validate) {
+                                    // 10.7 对象无效则销毁
                                     destroy(underTest, DestroyMode.NORMAL);
                                     destroyedByEvictorCount.incrementAndGet();
                                     if (validationThrowable != null) {
@@ -747,6 +626,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                                     }
                                 } else {
                                     try {
+                                        // 10.8 对象有效则重新钝化
                                         factory.passivateObject(underTest);
                                     } catch (final Exception e) {
                                         destroy(underTest, DestroyMode.NORMAL);
@@ -755,6 +635,8 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                                 }
                             }
                         }
+
+                        // 11.通知对象空闲回收结束
                         underTest.endEvictionTest(idleObjects);
                         // TODO - May need to add code here once additional
                         // states are used
@@ -764,6 +646,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         }
         final AbandonedConfig ac = this.abandonedConfig;
         if (ac != null && ac.getRemoveAbandonedOnMaintenance()) {
+            // 12.如果开启泄露检测，执行一次泄露检测流程
             removeAbandoned(ac);
         }
     }
@@ -778,12 +661,8 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         return factory;
     }
 
-    /**
-     * Gets the type - including the specific type rather than the generic -
-     * of the factory.
-     *
-     * @return A string representation of the factory type
-     */
+
+    // 获取工厂类型
     @Override
     public String getFactoryType() {
         // Not thread safe. Accept that there may be multiple evaluations.
@@ -800,48 +679,22 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         return factoryType;
     }
 
-    /**
-     * Gets the cap on the number of "idle" instances in the pool. If maxIdle
-     * is set too low on heavily loaded systems it is possible you will see
-     * objects being destroyed and almost immediately new objects being created.
-     * This is a result of the active threads momentarily returning objects
-     * faster than they are requesting them, causing the number of idle
-     * objects to rise above maxIdle. The best value for maxIdle for heavily
-     * loaded system will vary but the default is a good starting point.
-     *
-     * @return the maximum number of "idle" instances that can be held in the
-     *         pool or a negative value if there is no limit
-     *
-     * @see #setMaxIdle
-     */
+
+    // 获取最大空闲数量
     @Override
     public int getMaxIdle() {
         return maxIdle;
     }
 
-    /**
-     * Gets the target for the minimum number of idle objects to maintain in
-     * the pool. This setting only has an effect if it is positive and
-     * {@link #getDurationBetweenEvictionRuns()} is greater than zero. If this
-     * is the case, an attempt is made to ensure that the pool has the required
-     * minimum number of instances during idle object eviction runs.
-     * <p>
-     * If the configured value of minIdle is greater than the configured value
-     * for maxIdle then the value of maxIdle will be used instead.
-     * </p>
-     *
-     * @return The minimum number of objects.
-     *
-     * @see #setMinIdle(int)
-     * @see #setMaxIdle(int)
-     * @see #setTimeBetweenEvictionRuns(Duration)
-     */
+
+    // 获取最小空闲数量
     @Override
     public int getMinIdle() {
         final int maxIdleSave = getMaxIdle();
         return Math.min(this.minIdle, maxIdleSave);
     }
 
+    // 获取使用中的对象数
     @Override
     public int getNumActive() {
         return allObjects.size() - idleObjects.size();
@@ -852,12 +705,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         return idleObjects.size();
     }
 
-    /**
-     * Calculates the number of objects to test in a run of the idle object
-     * evictor.
-     *
-     * @return The number of objects to test for validity
-     */
+    // 计算每次空闲驱逐要检查的对象数
     private int getNumTests() {
         final int numTestsPerEvictionRun = getNumTestsPerEvictionRun();
         if (numTestsPerEvictionRun >= 0) {
@@ -867,14 +715,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                 Math.abs((double) numTestsPerEvictionRun));
     }
 
-    /**
-     * Gets an estimate of the number of threads currently blocked waiting for
-     * an object from the pool. This is intended for monitoring only, not for
-     * synchronization control.
-     *
-     * @return The estimate of the number of threads currently blocked waiting
-     *         for an object from the pool
-     */
+   // 获取当前阻塞等待借用对象的线程数
     @Override
     public int getNumWaiters() {
         if (getBlockWhenExhausted()) {
@@ -933,24 +774,16 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         }
         synchronized (p) {
             if (p.getState() != PooledObjectState.INVALID) {
+                // 销毁对象
                 destroy(p, destroyMode);
             }
         }
+        // 更新空闲数量
         ensureIdle(1, false);
     }
 
-    /**
-     * Provides information on all the objects in the pool, both idle (waiting
-     * to be borrowed) and active (currently borrowed).
-     * <p>
-     * Note: This is named listAllObjects so it is presented as an operation via
-     * JMX. That means it won't be invoked unless the explicitly requested
-     * whereas all attributes will be automatically requested when viewing the
-     * attributes for an object in a tool like JConsole.
-     * </p>
-     *
-     * @return Information grouped on all the objects in the pool
-     */
+
+    // 获取所有池对象信息
     @Override
     public Set<DefaultPooledObjectInfo> listAllObjects() {
         return allObjects.values().stream().map(DefaultPooledObjectInfo::new).collect(Collectors.toSet());
@@ -969,22 +802,19 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         ensureMinIdle();
     }
 
-    /**
-     * Recovers abandoned objects which have been checked out but
-     * not used since longer than the removeAbandonedTimeout.
-     *
-     * @param abandonedConfig The configuration to use to identify abandoned objects
-     */
+    // 销毁被借出但长时间未使用的对象
     @SuppressWarnings("resource") // PrintWriter is managed elsewhere
     private void removeAbandoned(final AbandonedConfig abandonedConfig) {
-        // Generate a list of abandoned objects to remove
+        // 生成要删除的废弃对象列表
         final ArrayList<PooledObject<T>> remove = createRemoveList(abandonedConfig, allObjects);
-        // Now remove the abandoned objects
+        // 移除废弃对象
         remove.forEach(pooledObject -> {
+            // 记录日志
             if (abandonedConfig.getLogAbandoned()) {
                 pooledObject.printStackTrace(abandonedConfig.getLogWriter());
             }
             try {
+                // 销毁对象
                 invalidateObject(pooledObject.getObject(), DestroyMode.ABANDONED);
             } catch (final Exception e) {
                 swallowException(e);
@@ -992,28 +822,16 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
         });
     }
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * If {@link #getMaxIdle() maxIdle} is set to a positive value and the
-     * number of idle instances has reached this value, the returning instance
-     * is destroyed.
-     * </p>
-     * <p>
-     * If {@link #getTestOnReturn() testOnReturn} == true, the returning
-     * instance is validated before being returned to the idle instance pool. In
-     * this case, if validation fails, the instance is destroyed.
-     * </p>
-     * <p>
-     * Exceptions encountered destroying objects for any reason are swallowed
-     * but notified via a {@link SwallowedExceptionListener}.
-     * </p>
-     */
+
+    // 返回对象
     @Override
     public void returnObject(final T obj) {
+
+        // 1.检查是否为池中的对象
         final PooledObject<T> p = getPooledObject(obj);
 
         if (p == null) {
+            // 不开启泄露对象检测时，直接抛出异常 (开启泄露检测后，对象池可能强制销毁长时间空闲的对象，当使用方后续调用return时，不抛出异常，和关闭泄露检测情况下保持一致)
             if (!isAbandonedConfig()) {
                 throw new IllegalStateException(
                         "Returned object not currently part of this pool");
@@ -1021,30 +839,38 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
             return; // Object was abandoned and removed
         }
 
+        // 2.修改状态为返回中
         markReturningState(p);
 
+        // 3.记录上次借用时长
         final Duration activeTime = p.getActiveDuration();
 
+        // 4.开启TestOnReturn时，校验对象有效性
         if (getTestOnReturn() && !factory.validateObject(p)) {
             try {
+                // 4.1 对象无效，直接销毁对象
                 destroy(p, DestroyMode.NORMAL);
             } catch (final Exception e) {
                 swallowException(e);
             }
             try {
+                // 4.2 更新空闲对象数
                 ensureIdle(1, false);
             } catch (final Exception e) {
                 swallowException(e);
             }
+            // 4.3 更新归还对象的统计信息
             updateStatsReturn(activeTime);
             return;
         }
 
         try {
+            // 5.钝化对象
             factory.passivateObject(p);
         } catch (final Exception e1) {
             swallowException(e1);
             try {
+                // 钝化失败则销毁
                 destroy(p, DestroyMode.NORMAL);
             } catch (final Exception e) {
                 swallowException(e);
@@ -1058,13 +884,16 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
             return;
         }
 
+        // 6.调用对象的归还方法
         if (!p.deallocate()) {
             throw new IllegalStateException(
                     "Object has already been returned to this pool or is invalid");
         }
 
+        // 7.检查空闲对象数
         final int maxIdleSave = getMaxIdle();
         if (isClosed() || maxIdleSave > -1 && maxIdleSave <= idleObjects.size()) {
+            // 7.1 大于配置最大的空闲对象数，直接销毁
             try {
                 destroy(p, DestroyMode.NORMAL);
             } catch (final Exception e) {
@@ -1076,6 +905,7 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                 swallowException(e);
             }
         } else {
+            // 7.2 小于配置的最大空闲数，则根据配置返回队头或队尾
             if (getLifo()) {
                 idleObjects.addFirst(p);
             } else {
@@ -1088,21 +918,9 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
                 clear();
             }
         }
-        updateStatsReturn(activeTime);
-    }
 
-    /**
-     * Sets the base pool configuration.
-     *
-     * @param conf the new configuration to use. This is used by value.
-     *
-     * @see GenericObjectPoolConfig
-     */
-    public void setConfig(final GenericObjectPoolConfig<T> conf) {
-        super.setConfig(conf);
-        setMaxIdle(conf.getMaxIdle());
-        setMinIdle(conf.getMinIdle());
-        setMaxTotal(conf.getMaxTotal());
+        // 8.更新归还对象的统计信息
+        updateStatsReturn(activeTime);
     }
 
     /**
@@ -1123,6 +941,22 @@ public class GenericObjectPool<T, E extends Exception> extends BaseGenericObject
      */
     public void setMaxIdle(final int maxIdle) {
         this.maxIdle = maxIdle;
+    }
+
+    /**
+     * Sets the base pool configuration.
+     *
+     * @param conf the new configuration to use. This is used by value.
+     *
+     * @see GenericObjectPoolConfig
+     */
+    public void setConfig(final GenericObjectPoolConfig<T> conf) {
+        // 更新配置，通用配置收归到父类
+        super.setConfig(conf);
+        // 池核心配置
+        setMaxIdle(conf.getMaxIdle());
+        setMinIdle(conf.getMinIdle());
+        setMaxTotal(conf.getMaxTotal());
     }
 
     /**

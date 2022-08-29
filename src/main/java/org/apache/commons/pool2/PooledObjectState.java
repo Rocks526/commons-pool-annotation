@@ -1,83 +1,42 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.apache.commons.pool2;
 
 /**
- * Provides all possible states of a {@link PooledObject}.
- *
- * @since 2.0
+ * 池对象所有可能的状态
  */
 public enum PooledObjectState {
 
-    /**
-     * In the queue, not in use.
-     */
+    // 位于队列中，空闲状态
     IDLE,
 
-    /**
-     * In use.
-     */
+    // 已经分配出去，使用中状态
     ALLOCATED,
 
-    /**
-     * In the queue, currently being tested for possible eviction.
-     */
+    // 位于队列中，当前正在检测空闲对象回收
     EVICTION,
 
-    /**
-     * Not in the queue, currently being tested for possible eviction. An attempt to borrow the object was made while
-     * being tested which removed it from the queue. It should be returned to the head of the queue once eviction
-     * testing completes.
-     * <p>
-     * TODO: Consider allocating object and ignoring the result of the eviction test.
-     * </p>
-     */
+    // 对象在检查是否空闲时，被借出对象池，则处于此状态
+    // 当对象检测完空闲状态后，修改为IDLE，并重新加入空闲队列
     EVICTION_RETURN_TO_HEAD,
 
-    /**
-     * In the queue, currently being validated.
-     */
+    // 位于队列中，空闲状态，当前正在验证有效性
+    // 即testOnIdle配置
     VALIDATION,
 
-    /**
-     * Not in queue, currently being validated. The object was borrowed while being validated and since testOnBorrow was
-     * configured, it was removed from the queue and pre-allocated. It should be allocated once validation completes.
-     */
+    // 分配前验证状态
+    // 当对象从池中被借出，在配置了testOnBorrow 的情况下，对像从队列移出和进行分配的时候会进行验证
     VALIDATION_PREALLOCATED,
 
-    /**
-     * Not in queue, currently being validated. An attempt to borrow the object was made while previously being tested
-     * for eviction which removed it from the queue. It should be returned to the head of the queue once validation
-     * completes.
-     */
+    // 使用完即将归还池中
+    // 配置了 testOnReturn 时，返回池中前验证有效性
     VALIDATION_RETURN_TO_HEAD,
 
-    /**
-     * Failed maintenance (e.g. eviction test or validation) and will be / has been destroyed
-     */
+    // 无效状态，空闲对象即将回收或者validate验证失败，将要销毁的对象
     INVALID,
 
-    /**
-     * Deemed abandoned, to be invalidated.
-     */
+    // 泄露检测配置，确定长时间未使用，属于泄露对象，即将回收
     ABANDONED,
 
-    /**
-     * Returning to the pool.
-     */
+    // 正在返回池里
     RETURNING
+
 }

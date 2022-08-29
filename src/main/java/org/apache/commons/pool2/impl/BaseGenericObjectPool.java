@@ -1,19 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.apache.commons.pool2.impl;
 
 import java.io.PrintWriter;
@@ -50,16 +34,10 @@ import org.apache.commons.pool2.PooledObjectState;
 import org.apache.commons.pool2.SwallowedExceptionListener;
 
 /**
- * Base class that provides common functionality for {@link GenericObjectPool}
- * and {@link GenericKeyedObjectPool}. The primary reason this class exists is
- * reduce code duplication between the two pool implementations.
- *
- * @param <T> Type of element pooled in this pool.
- * @param <E> Type of exception thrown in this pool.
- *
- * This class is intended to be thread-safe.
- *
- * @since 2.0
+ * 对象池的公共实现，作为GenericObjectPool和GenericKeyObjectPool的基类
+ * 提供通用方法，如JMX属性获取、空闲对象回收等
+ * @param <T>
+ * @param <E>
  */
 public abstract class BaseGenericObjectPool<T, E extends Exception> extends BaseObject {
 
@@ -337,14 +315,32 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
     private static final Duration DEFAULT_REMOVE_ABANDONED_TIMEOUT = Duration.ofSeconds(Integer.MAX_VALUE);
     // Configuration attributes
     private volatile int maxTotal = GenericKeyedObjectPoolConfig.DEFAULT_MAX_TOTAL;
+
+    // 当对象池暂无可用对象时，是否阻塞等待
     private volatile boolean blockWhenExhausted = BaseObjectPoolConfig.DEFAULT_BLOCK_WHEN_EXHAUSTED;
+
+    // 借用对象时的超时时间，当blockWhenExhausted为true时生效，为-1时代表永远阻塞
     private volatile Duration maxWaitDuration = BaseObjectPoolConfig.DEFAULT_MAX_WAIT;
+
+    // 返回对象时，采用FIFO还是LIFO
     private volatile boolean lifo = BaseObjectPoolConfig.DEFAULT_LIFO;
+
+    // 是否公平分配模式，先借用对象的线程先获取对象
     private final boolean fairness;
+
+    // 创建对象时是否校验有效性
     private volatile boolean testOnCreate = BaseObjectPoolConfig.DEFAULT_TEST_ON_CREATE;
+
+    // 借用对象时是否校验有效性
     private volatile boolean testOnBorrow = BaseObjectPoolConfig.DEFAULT_TEST_ON_BORROW;
+
+    // 返回时是否检验有效性
     private volatile boolean testOnReturn = BaseObjectPoolConfig.DEFAULT_TEST_ON_RETURN;
+
+    // 空闲时是否检测有效性
     private volatile boolean testWhileIdle = BaseObjectPoolConfig.DEFAULT_TEST_WHILE_IDLE;
+
+    // 空闲对象检测线程检测周期
     private volatile Duration durationBetweenEvictionRuns = BaseObjectPoolConfig.DEFAULT_TIME_BETWEEN_EVICTION_RUNS;
     private volatile int numTestsPerEvictionRun = BaseObjectPoolConfig.DEFAULT_NUM_TESTS_PER_EVICTION_RUN;
 
@@ -354,6 +350,9 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
     private volatile Duration evictorShutdownTimeoutDuration = BaseObjectPoolConfig.DEFAULT_EVICTOR_SHUTDOWN_TIMEOUT;
     // Internal (primarily state) attributes
     final Object closeLock = new Object();
+
+    // volatile修饰保证线程间的可见性
+    // 对象池是否关闭
     volatile boolean closed;
 
     final Object evictionLock = new Object();
@@ -372,9 +371,17 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
     private final String creationStackTrace;
     private final AtomicLong borrowedCount = new AtomicLong();
     private final AtomicLong returnedCount = new AtomicLong();
+
+    // 累计创建对象数
     final AtomicLong createdCount = new AtomicLong();
+
+    // 获取累计销毁对象数
     final AtomicLong destroyedCount = new AtomicLong();
+
+    // 获取空闲检测销毁的对象数
     final AtomicLong destroyedByEvictorCount = new AtomicLong();
+
+    // 获取借用对象时，有效性校验失败销毁的对象数
     final AtomicLong destroyedByBorrowValidationCount = new AtomicLong();
 
     private final StatsStore activeTimes = new StatsStore(MEAN_TIMING_STATS_CACHE_SIZE);
@@ -386,7 +393,7 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
     private volatile SwallowedExceptionListener swallowedExceptionListener;
     private volatile boolean messageStatistics;
 
-    /** Additional configuration properties for abandoned object tracking. */
+    // 泄露检测配置
     protected volatile AbandonedConfig abandonedConfig;
 
     /**
@@ -434,10 +441,7 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return messageStatistics ? string + ", " + getStatsString() : string;
     }
 
-    /**
-     * Verifies that the pool is open.
-     * @throws IllegalStateException if the pool is closed.
-     */
+    // 检查对象池状态
     final void assertOpen() throws IllegalStateException {
         if (isClosed()) {
             throw new IllegalStateException("Pool not open");
@@ -462,19 +466,24 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
      */
     public abstract void close();
 
+
     /**
-     * Creates a list of pooled objects to remove based on their state.
-     * @param abandonedConfig The abandoned configuration.
-     * @param allObjects PooledObject instances to consider.
-     * @return a list of pooled objects to remove based on their state.
+     * 检测池对象状态，返回要销毁的池对象（泄露的）
+     * @param abandonedConfig   泄露检测配置
+     * @param allObjects    要检测的池对象
+     * @return  要销毁的池对象列表
      */
     ArrayList<PooledObject<T>> createRemoveList(final AbandonedConfig abandonedConfig, final Map<IdentityWrapper<T>, PooledObject<T>> allObjects) {
+        // 根据泄露检测配置，计算要求的对象上次使用时间
         final Instant timeout = Instant.now().minus(abandonedConfig.getRemoveAbandonedTimeoutDuration());
+        // 要销毁的对象
         final ArrayList<PooledObject<T>> remove = new ArrayList<>();
         allObjects.values().forEach(pooledObject -> {
+            // 遍历时锁定单个池对象，避免相关操作
             synchronized (pooledObject) {
                 if (pooledObject.getState() == PooledObjectState.ALLOCATED &&
                         pooledObject.getLastUsedInstant().compareTo(timeout) <= 0) {
+                    // 对象是借出状态，并且上次使用时间早于阈值，则修改为泄露对象状态，并加入列表
                     pooledObject.markAbandoned();
                     remove.add(pooledObject);
                 }
@@ -525,65 +534,27 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return borrowedCount.get();
     }
 
-    /**
-     * Gets the total number of objects created for this pool over the lifetime of
-     * the pool.
-     * @return the created object count
-     */
     public final long getCreatedCount() {
         return createdCount.get();
     }
 
-    /**
-     * Gets the stack trace for the call that created this pool. JMX
-     * registration may trigger a memory leak so it is important that pools are
-     * deregistered when no longer used by calling the {@link #close()} method.
-     * This method is provided to assist with identifying code that creates but
-     * does not close it thereby creating a memory leak.
-     * @return pool creation stack trace
-     */
+
     public final String getCreationStackTrace() {
         return creationStackTrace;
     }
 
-    /**
-     * Gets the total number of objects destroyed by this pool as a result of failing
-     * validation during {@code borrowObject()} over the lifetime of the
-     * pool.
-     * @return validation destroyed object count
-     */
     public final long getDestroyedByBorrowValidationCount() {
         return destroyedByBorrowValidationCount.get();
     }
 
-    /**
-     * Gets the total number of objects destroyed by the evictor associated with this
-     * pool over the lifetime of the pool.
-     * @return the evictor destroyed object count
-     */
     public final long getDestroyedByEvictorCount() {
         return destroyedByEvictorCount.get();
     }
 
-    /**
-     * Gets the total number of objects destroyed by this pool over the lifetime of
-     * the pool.
-     * @return the destroyed object count
-     */
     public final long getDestroyedCount() {
         return destroyedCount.get();
     }
 
-    /**
-     * Gets the duration to sleep between runs of the idle
-     * object evictor thread. When non-positive, no idle object evictor thread
-     * will be run.
-     *
-     * @return number of milliseconds to sleep between evictor runs
-     *
-     * @see #setTimeBetweenEvictionRuns
-     * @since 2.11.0
-     */
     public final Duration getDurationBetweenEvictionRuns() {
         return durationBetweenEvictionRuns;
     }
@@ -653,13 +624,8 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return evictorShutdownTimeoutDuration.toMillis();
     }
 
-    /**
-     * Gets whether or not the pool serves threads waiting to borrow objects fairly.
-     * True means that waiting threads are served as if waiting in a FIFO queue.
-     *
-     * @return {@code true} if waiting threads are to be served
-     *             by the pool in arrival order
-     */
+
+    // 是否为等待线程公平提供服务，公平即先来先服务
     public final boolean getFairness() {
         return fairness;
     }
@@ -674,73 +640,30 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return objectName;
     }
 
-    /**
-     * Gets whether the pool has LIFO (last in, first out) behavior with
-     * respect to idle objects - always returning the most recently used object
-     * from the pool, or as a FIFO (first in, first out) queue, where the pool
-     * always returns the oldest object in the idle object pool.
-     *
-     * @return {@code true} if the pool is configured with LIFO behavior
-     *         or {@code false} if the pool is configured with FIFO
-     *         behavior
-     *
-     * @see #setLifo
-     */
+
+    // 归还对象时，是否后进先出
     public final boolean getLifo() {
         return lifo;
     }
 
-    /**
-     * Gets whether this pool identifies and logs any abandoned objects.
-     *
-     * @return {@code true} if abandoned object removal is configured for this
-     *         pool and removal events are to be logged otherwise {@code false}
-     *
-     * @see AbandonedConfig#getLogAbandoned()
-     * @since 2.11.0
-     */
+
+    // 是否开启泄露对象销毁的日志记录
     public boolean getLogAbandoned() {
         final AbandonedConfig ac = this.abandonedConfig;
         return ac != null && ac.getLogAbandoned();
     }
 
-    /**
-     * Gets the maximum time a thread has waited to borrow objects from the pool.
-     * @return maximum wait time in milliseconds since the pool was created
-     */
+    // 获取从池中借用对象耗时最长的一次时间
     public final long getMaxBorrowWaitTimeMillis() {
         return maxBorrowWaitDuration.get().toMillis();
     }
 
-    /**
-     * Gets the maximum number of objects that can be allocated by the pool
-     * (checked out to clients, or idle awaiting checkout) at a given time. When
-     * negative, there is no limit to the number of objects that can be
-     * managed by the pool at one time.
-     *
-     * @return the cap on the total number of object instances managed by the
-     *         pool.
-     *
-     * @see #setMaxTotal
-     */
+    // 获取最大对象数量
     public final int getMaxTotal() {
         return maxTotal;
     }
 
-    /**
-     * Gets the maximum duration the
-     * {@code borrowObject()} method should block before throwing an
-     * exception when the pool is exhausted and
-     * {@link #getBlockWhenExhausted} is true. When less than 0, the
-     * {@code borrowObject()} method may block indefinitely.
-     *
-     * @return the maximum number of milliseconds {@code borrowObject()}
-     *         will block.
-     *
-     * @see #setMaxWait
-     * @see #setBlockWhenExhausted
-     * @since 2.11.0
-     */
+    // 获取从池中借用对象的最长超时时间
     public final Duration getMaxWaitDuration() {
         return maxWaitDuration;
     }
@@ -764,22 +687,12 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return maxWaitDuration.toMillis();
     }
 
-    /**
-     * Gets the mean time objects are active for based on the last {@link
-     * #MEAN_TIMING_STATS_CACHE_SIZE} objects returned to the pool.
-     * @return mean time an object has been checked out from the pool among
-     * recently returned objects
-     */
+    // 获取从池中对象借出平均使用时间
     public final long getMeanActiveTimeMillis() {
         return activeTimes.getMean();
     }
 
-    /**
-     * Gets the mean time threads wait to borrow an object based on the last {@link
-     * #MEAN_TIMING_STATS_CACHE_SIZE} objects borrowed from the pool.
-     * @return mean time in milliseconds that a recently served thread has had
-     * to wait to borrow an object from the pool
-     */
+    // 获取从池中获取一个对象的平均时间
     public final long getMeanBorrowWaitTimeMillis() {
         return waitTimes.getMean();
     }
@@ -808,19 +721,8 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return messageStatistics;
     }
 
-    /**
-     * Gets the minimum amount of time an object may sit idle in the pool
-     * before it is eligible for eviction by the idle object evictor (if any -
-     * see {@link #setTimeBetweenEvictionRuns(Duration)}). When non-positive,
-     * no objects will be evicted from the pool due to idle time alone.
-     *
-     * @return minimum amount of time an object may sit idle in the pool before
-     *         it is eligible for eviction
-     *
-     * @see #setMinEvictableIdleTimeMillis
-     * @see #setTimeBetweenEvictionRunsMillis
-     * @since 2.11.0
-     */
+
+    // 获取空闲对象超时时间，超过则回收
     public final Duration getMinEvictableIdleDuration() {
         return minEvictableIdleDuration;
     }
@@ -868,21 +770,8 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
      */
     public abstract int getNumIdle();
 
-    /**
-     * Gets the maximum number of objects to examine during each run (if any)
-     * of the idle object evictor thread. When positive, the number of tests
-     * performed for a run will be the minimum of the configured value and the
-     * number of idle instances in the pool. When negative, the number of tests
-     * performed will be <code>ceil({@link #getNumIdle}/
-     * abs({@link #getNumTestsPerEvictionRun}))</code> which means that when the
-     * value is {@code -n} roughly one nth of the idle objects will be
-     * tested per run.
-     *
-     * @return max number of objects to examine during each evictor run
-     *
-     * @see #setNumTestsPerEvictionRun
-     * @see #setTimeBetweenEvictionRunsMillis
-     */
+
+    // 获取每次空闲对象回收扫描的对象个数，默认3分之一
     public final int getNumTestsPerEvictionRun() {
         return numTestsPerEvictionRun;
     }
@@ -933,27 +822,13 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return (int) getRemoveAbandonedTimeoutDuration().getSeconds();
     }
 
-    /**
-     * Gets the timeout before which an object will be considered to be
-     * abandoned by this pool.
-     *
-     * @return The abandoned object timeout in seconds if abandoned object
-     *         removal is configured for this pool; Integer.MAX_VALUE otherwise.
-     *
-     * @see AbandonedConfig#getRemoveAbandonedTimeoutDuration()
-     * @since 2.11.0
-     */
+    // 泄露对象检测的超时时间，即借出对象后，超过此时间没有使用，则认为对象泄露，默认5分钟
     public Duration getRemoveAbandonedTimeoutDuration() {
         final AbandonedConfig ac = this.abandonedConfig;
         return ac != null ? ac.getRemoveAbandonedTimeoutDuration() : DEFAULT_REMOVE_ABANDONED_TIMEOUT;
     }
 
-    /**
-     * Gets the total number of objects returned to this pool over the lifetime of
-     * the pool. This excludes attempts to return the same object multiple
-     * times.
-     * @return the returned object count
-     */
+    // 获取累计返回对象池的数量
     public final long getReturnedCount() {
         return returnedCount.get();
     }
@@ -1065,70 +940,22 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return swallowedExceptionListener;
     }
 
-    /**
-     * Gets whether objects borrowed from the pool will be validated before
-     * being returned from the {@code borrowObject()} method. Validation is
-     * performed by the {@code validateObject()} method of the factory
-     * associated with the pool. If the object fails to validate, it will be
-     * removed from the pool and destroyed, and a new attempt will be made to
-     * borrow an object from the pool.
-     *
-     * @return {@code true} if objects are validated before being returned
-     *         from the {@code borrowObject()} method
-     *
-     * @see #setTestOnBorrow
-     */
+
+    // 借用时是否开启有效性测试
     public final boolean getTestOnBorrow() {
         return testOnBorrow;
     }
 
-    /**
-     * Gets whether objects created for the pool will be validated before
-     * being returned from the {@code borrowObject()} method. Validation is
-     * performed by the {@code validateObject()} method of the factory
-     * associated with the pool. If the object fails to validate, then
-     * {@code borrowObject()} will fail.
-     *
-     * @return {@code true} if newly created objects are validated before
-     *         being returned from the {@code borrowObject()} method
-     *
-     * @see #setTestOnCreate
-     *
-     * @since 2.2
-     */
+
     public final boolean getTestOnCreate() {
         return testOnCreate;
     }
 
-    /**
-     * Gets whether objects borrowed from the pool will be validated when
-     * they are returned to the pool via the {@code returnObject()} method.
-     * Validation is performed by the {@code validateObject()} method of
-     * the factory associated with the pool. Returning objects that fail validation
-     * are destroyed rather then being returned the pool.
-     *
-     * @return {@code true} if objects are validated on return to
-     *         the pool via the {@code returnObject()} method
-     *
-     * @see #setTestOnReturn
-     */
+
     public final boolean getTestOnReturn() {
         return testOnReturn;
     }
 
-    /**
-     * Gets whether objects sitting idle in the pool will be validated by the
-     * idle object evictor (if any - see
-     * {@link #setTimeBetweenEvictionRuns(Duration)}). Validation is performed
-     * by the {@code validateObject()} method of the factory associated
-     * with the pool. If the object fails to validate, it will be removed from
-     * the pool and destroyed.
-     *
-     * @return {@code true} if objects will be validated by the evictor
-     *
-     * @see #setTestWhileIdle
-     * @see #setTimeBetweenEvictionRunsMillis
-     */
     public final boolean getTestWhileIdle() {
         return testWhileIdle;
     }
@@ -1175,10 +1002,6 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
         return abandonedConfig != null;
     }
 
-    /**
-     * Tests whether this pool instance been closed.
-     * @return {@code true} when this pool has been closed.
-     */
     public final boolean isClosed() {
         return closed;
     }
@@ -1300,17 +1123,33 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
      * @param config Initialization source.
      */
     protected void setConfig(final BaseObjectPoolConfig<T> config) {
+        // 归还队列是否采用LIFO
         setLifo(config.getLifo());
+        // 借用对象时的超时时间
         setMaxWait(config.getMaxWaitDuration());
+        // 借用对象时是否阻塞
         setBlockWhenExhausted(config.getBlockWhenExhausted());
+
+        // =================== 有效性检查相关配置 ==========================
+        // 创建对象时是否校验有效性
         setTestOnCreate(config.getTestOnCreate());
+        // 借用对象时是否校验有效性
         setTestOnBorrow(config.getTestOnBorrow());
+        // 归还对象时是否检验有效性
         setTestOnReturn(config.getTestOnReturn());
+        // 空闲时是否检验有效性
         setTestWhileIdle(config.getTestWhileIdle());
+
+        // ================= 空闲对象回收机制 ================================
+        // 每次空闲对象回收线程扫描的对象数
         setNumTestsPerEvictionRun(config.getNumTestsPerEvictionRun());
-        setMinEvictableIdle(config.getMinEvictableIdleDuration());
+        // 空闲对象检测线程的检测周期
         setTimeBetweenEvictionRuns(config.getDurationBetweenEvictionRuns());
+        // 设置对象空闲时间阈值，超过此值的对象会被认为空闲对象，被回收，默认30分钟
+        setMinEvictableIdle(config.getMinEvictableIdleDuration());
+        // 设置对象空闲时间阈值，超过此值的对象会被认为空闲对象，当空闲对象大于 minIdle 参数时会被回收，默认-1，代表大于 minIdle 的空闲对象立刻被回收
         setSoftMinEvictableIdle(config.getSoftMinEvictableIdleDuration());
+        // 设置空闲对象回收策略，默认策略为 DefaultEvictionPolicy
         final EvictionPolicy<T> policy = config.getEvictionPolicy();
         if (policy == null) {
             // Use the class name (pre-2.6.0 compatible)
@@ -1319,6 +1158,7 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
             // Otherwise, use the class (2.6.0 feature)
             setEvictionPolicy(policy);
         }
+        // 空闲对象回收线程关闭时的超时时间，默认10秒
         setEvictorShutdownTimeout(config.getEvictorShutdownTimeoutDuration());
     }
 
@@ -1767,7 +1607,9 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
      * @since 2.10.0
      */
     public final void setTimeBetweenEvictionRuns(final Duration timeBetweenEvictionRuns) {
+        // 获取配置值
         this.durationBetweenEvictionRuns = PoolImplUtils.nonNull(timeBetweenEvictionRuns, BaseObjectPoolConfig.DEFAULT_TIME_BETWEEN_EVICTION_RUNS);
+        // 开启驱逐线程，用于泄露对象异步检测
         startEvictor(this.durationBetweenEvictionRuns);
     }
 
@@ -1800,14 +1642,18 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
      * @param delay time in milliseconds before start and between eviction runs
      */
     final void startEvictor(final Duration delay) {
+        // 全局锁，避免开启和停止并发操作
         synchronized (evictionLock) {
+            // delay > 0 则开启
             final boolean isPositiverDelay = PoolImplUtils.isPositive(delay);
-            if (evictor == null) { // Starting evictor for the first time or after a cancel
-                if (isPositiverDelay) { // Starting new evictor
+            if (evictor == null) {
+                if (isPositiverDelay) {
+                    // 开启
                     evictor = new Evictor();
                     EvictionTimer.schedule(evictor, delay, delay);
                 }
-            } else if (isPositiverDelay) { // Stop or restart of existing evictor: Restart
+            } else if (isPositiverDelay) {
+                // 重启驱逐线程
                 synchronized (EvictionTimer.class) { // Ensure no cancel can happen between cancel / schedule calls
                     EvictionTimer.cancel(evictor, evictorShutdownTimeoutDuration, true);
                     evictor = null;
@@ -1815,7 +1661,8 @@ public abstract class BaseGenericObjectPool<T, E extends Exception> extends Base
                     evictor = new Evictor();
                     EvictionTimer.schedule(evictor, delay, delay);
                 }
-            } else { // Stopping evictor
+            } else {
+                // 停止驱逐线程
                 EvictionTimer.cancel(evictor, evictorShutdownTimeoutDuration, false);
             }
         }
